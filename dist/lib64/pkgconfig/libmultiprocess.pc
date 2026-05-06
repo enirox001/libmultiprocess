@@ -1,0 +1,12 @@
+prefix=/home/enochazariah/dev/libmultiprocess/dist
+exec_prefix=${prefix}
+libdir=${prefix}/lib64
+includedir=${prefix}/include
+capnp_prefix=/usr
+
+Name: libmultiprocess
+Description: Multiprocess IPC library
+Version: 0.0
+
+Libs: -L${libdir} -lmultiprocess -L${capnp_prefix}/lib -lcapnp-rpc -lcapnp -lkj-async -lkj -pthread -lpthread
+Cflags: -I${includedir} -I${capnp_prefix}/include -pthread
