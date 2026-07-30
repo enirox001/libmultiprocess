@@ -174,9 +174,11 @@ set(MP_PUBLIC_HEADERS
   include/mp/type-struct.h
   include/mp/type-threadmap.h
   include/mp/type-tuple.h
+  include/mp/type-unordered-set.h
   include/mp/type-vector.h
   include/mp/type-void.h
-  include/mp/util.h)
+  include/mp/util.h
+  include/mp/version.h)
 add_library(multiprocess STATIC
   ${MP_PROXY_SRCS}
   ${MP_PUBLIC_HEADERS}
