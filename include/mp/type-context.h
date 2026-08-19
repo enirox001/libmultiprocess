@@ -131,6 +131,18 @@ auto PassField(Priority<1>, TypeList<>, ServerContext& server_context, const Fn&
             std::tie(request_thread, inserted) = SetThread(
                 GuardedRef{thread_context.waiter->m_mutex, request_threads}, server.m_context.connection,
                 [&] { return Accessor::get(call_context.getParams()).getCallbackThread(); });
+            // Initialize the request's results struct here on the event loop
+            // thread, so later getResults() calls on the execution thread
+            // return the response capnp caches on first use instead of
+            // reading Cap'n Proto connection state, which is unsafe off the
+            // event loop thread because RpcConnectionState::disconnect()
+            // overwrites it there without synchronization on an abrupt remote
+            // disconnect (bitcoin-core/libmultiprocess#348). After this call,
+            // the only call_context state accessed by the execution thread is
+            // the params reader and the results struct allocated here; any
+            // future change accessing other call_context state needs to move
+            // that access to the event loop thread the same way.
+            call_context.getResults();
         });
 
         // If an entry was inserted into the request_threads map,

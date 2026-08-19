@@ -5,6 +5,7 @@
 #include <mp/test/foo.capnp.h>
 #include <mp/test/foo.capnp.proxy.h>
 
+#include <any>
 #include <atomic>
 #include <capnp/capability.h>
 #include <capnp/rpc.h>
@@ -79,6 +80,7 @@ class TestSetup
 public:
     std::function<void()> server_disconnect;
     std::function<void()> server_disconnect_later;
+    std::function<void()> server_on_disconnect;
     std::function<void()> client_disconnect;
     std::promise<std::unique_ptr<ProxyClient<messages::FooInterface>>> client_promise;
     std::unique_ptr<ProxyClient<messages::FooInterface>> client;
@@ -109,8 +111,14 @@ public:
                   loop.m_task_set->add(kj::evalLater([&] { server_connection.reset(); }));
               };
               // Set handler to destroy the server when the client disconnects. This
-              // is ignored if server_disconnect() is called instead.
-              server_connection->onDisconnect([&] { server_connection.reset(); });
+              // is ignored if server_disconnect() is called instead. Tests can
+              // assign server_on_disconnect to override the default behavior of
+              // destroying the server connection as soon as the disconnect is
+              // detected (in which case they need to destroy it themselves,
+              // e.g. by calling server_disconnect(), so the event loop can
+              // exit).
+              server_on_disconnect = [&] { server_connection.reset(); };
+              server_connection->onDisconnect([&] { server_on_disconnect(); });
 
               auto client_connection = std::make_unique<Connection>(loop, kj::mv(pipe.ends[1]));
               auto client_proxy = std::make_unique<ProxyClient<messages::FooInterface>>(
@@ -366,6 +374,98 @@ KJ_TEST("Calling IPC method, disconnecting and blocking during the call")
     // *before* the TestSetup variable so is not destroyed while
     // signal.get_future().get() is called.
     signal.set_value();
+}
+
+KJ_TEST("Calling async IPC method with a remote disconnect while results are built")
+{
+    // Regression test for bitcoin-core/libmultiprocess#348, a data race
+    // reported by ThreadSanitizer where a server worker thread called
+    // call_context.getResults() while the event loop thread was tearing down
+    // Cap'n Proto connection state (capnp::_::RpcConnectionState::disconnect()
+    // overwriting the RpcConnectionState::connection field) after an abrupt
+    // remote disconnect.
+    //
+    // The test makes an async IPC call (callMessageAsync) whose method body
+    // just signals the main thread. When the worker thread returns from the
+    // method body, it calls call_context.getResults(), reading the connection
+    // state, and starts serializing the FooMessage result, where the
+    // testing_hook_misc hook set below makes it sleep. Meanwhile the main
+    // thread destroys the client connection, and the event loop thread
+    // processes the resulting EOF, running RpcConnectionState::disconnect()
+    // and overwriting the connection state the worker thread just read, with
+    // no synchronization between the two accesses.
+    //
+    // Two details are essential for ThreadSanitizer to detect the race:
+    //
+    // - There must be no synchronization between the worker thread's
+    //   getResults() call and the event loop thread's disconnect processing.
+    //   The worker signals the main thread *before* getResults() and sleeps
+    //   (sleeping creates no happens-before edge) across the disconnect, so
+    //   the racing accesses are not ordered by any of the test's own
+    //   synchronization.
+    //
+    // - The worker thread's read should come *before* the event loop thread's
+    //   write, close in time. In the write-then-read order (e.g. method
+    //   returning long after the disconnect), the race exists too, but
+    //   ThreadSanitizer usually misses it: right after disconnect() writes the
+    //   connection field, the loop thread's teardown destructors re-read it
+    //   many times (~ImportClient etc. check connection.is<Connected>() to
+    //   decide whether to send messages), evicting the write from the
+    //   per-granule shadow history before a late reader comes along.
+    //
+    // The server Connection object is deliberately kept alive during all this
+    // by overriding server_on_disconnect: destroying it would cancel the
+    // in-flight request (Connection::~Connection calls m_canceler.cancel(),
+    // setting request_canceled) and the worker would throw InterruptException
+    // instead of proceeding into getResults(). Keeping it alive matches the
+    // window in the original report, where the worker races with capnp's own
+    // internal teardown, which runs before any onDisconnect notification.
+
+    TestSetup setup{/*client_owns_connection=*/false};
+    ProxyClient<messages::FooInterface>* foo = setup.client.get();
+    KJ_EXPECT(foo->add(1, 2) == 3);
+    foo->initThreadMap();
+
+    // Keep the server Connection object alive when the disconnect is detected
+    // so the in-flight request is not canceled (see comment above). The
+    // connection is destroyed at the end of the test instead.
+    setup.server_on_disconnect = [] {};
+
+    // Signaled by the worker thread when the method body runs, just before it
+    // returns and the worker calls getResults() and serializes the results.
+    std::promise<void> fn_called;
+    setup.server->m_impl->m_fn = [&] { fn_called.set_value(); };
+
+    // Keep the worker thread inside the results-building step, without
+    // synchronizing, while the event loop thread processes the disconnect.
+    EventLoop& loop = *setup.server->m_context.connection->m_loop;
+    loop.testing_hook_misc = [](std::any arg) {
+        if (const char* const* tag{std::any_cast<const char*>(&arg)};
+            tag && std::string_view{*tag} == "build FooMessage") {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+    };
+
+    // Signaled by the worker thread when it is completely done with the
+    // request, including serializing the results.
+    std::promise<void> request_done;
+    loop.testing_hook_async_request_done = [&] { request_done.set_value(); };
+
+    // Make the IPC call from a separate thread so this thread can trigger the
+    // client disconnect while the call is executing.
+    std::thread caller{[&] {
+        EXPECT_EXCEPTION(foo->callMessageAsync(), "IPC client method call interrupted by disconnect.");
+    }};
+
+    fn_called.get_future().get();
+    setup.client_disconnect();
+    caller.join();
+
+    // Wait for the worker thread to finish the request, then tear down the
+    // server connection that was deliberately kept alive above, so the event
+    // loop is able to exit.
+    request_done.get_future().get();
+    setup.server_disconnect();
 }
 
 KJ_TEST("Worker thread destroyed before it is initialized")

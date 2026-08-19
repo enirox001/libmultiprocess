@@ -9,6 +9,7 @@
 #include <mp/proxy-types.h>
 
 // IWYU pragma: begin_exports
+#include <any>
 #include <capnp/common.h>
 #include <cstddef>
 #include <mp/test/foo.capnp.h>
@@ -75,6 +76,8 @@ inline void CustomBuildMessage(InvokeContext& invoke_context,
                         const test::FooMessage& src,
                         test::messages::FooMessage::Builder&& builder)
 {
+    const auto& hook{invoke_context.connection.m_loop->testing_hook_misc};
+    if (hook) hook("build FooMessage");
     builder.setMessage(src.message + " build");
 }
 
