@@ -181,7 +181,7 @@ KJ_TEST("Call FooInterface methods")
     }
     KJ_EXPECT(in.unordered_set_int.size() == out.unordered_set_int.size());
     for (const auto& elem : in.unordered_set_int) {
-        KJ_EXPECT(out.unordered_set_int.count(elem) == 1);
+        KJ_EXPECT(out.unordered_set_int.contains(elem));
     }
     KJ_EXPECT(in.vector_bool.size() == out.vector_bool.size());
     for (size_t i = 0; i < in.vector_bool.size(); ++i) {
