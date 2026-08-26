@@ -64,7 +64,7 @@ if(CAPNPROTO_CVE_AFFECTED OR CAPNPROTO_CLANG_INCOMPATIBLE)
   string(APPEND RESOLUTION_OPTIONS "  - Upgrade to Cap'n Proto version 1.0 or newer (recommended)\n")
 
   if(CAPNPROTO_CVE_AFFECTED AND NOT CAPNPROTO_CLANG_INCOMPATIBLE)
-    string(APPEND RESOLUTION_OPTIONS "  - Upgrade to a patched minor version (0.7.1, 0.8.1, 0.9.2, 0.10.3, or later)\n")
+    string(APPEND RESOLUTION_OPTIONS "  - Upgrade to a patched minor version (0.9.2, 0.10.3, or later)\n")
   elseif(CAPNPROTO_CLANG_INCOMPATIBLE AND NOT CAPNPROTO_CVE_AFFECTED)
     string(APPEND RESOLUTION_OPTIONS "  - Use GCC instead of Clang\n")
   endif()
