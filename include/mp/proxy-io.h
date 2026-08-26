@@ -12,6 +12,7 @@
 
 #include <capnp/rpc-twoparty.h>
 
+#include <any>
 #include <assert.h>
 #include <algorithm>
 #include <condition_variable>
@@ -374,6 +375,12 @@ public:
 
     //! Hook called on the event loop thread when a client has disconnected.
     std::function<void()> testing_hook_disconnected;
+
+    //! Miscellaneous testing hook. Called from various places with an
+    //! argument identifying the call site (typically a string literal), so
+    //! tests can control timing or inject behavior at specific points without
+    //! requiring a dedicated hook for each one.
+    std::function<void(std::any)> testing_hook_misc;
 };
 
 //! Single element task queue used to handle recursive capnp calls. (If the
